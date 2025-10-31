@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 
 from PySide6.QtCore import (Qt, QRect, QPropertyAnimation, QEasingCurve, 
-                           QPoint, Signal, QSize, Property)
+                           QPoint, Signal, QSize, Property, QSettings)
 from PySide6.QtGui import (QPainter, QColor, QBrush, QPen, QPixmap, 
                           QMouseEvent, QPaintEvent, QIcon)
 from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QLabel,
-                              QPushButton, QWidget, QGraphicsDropShadowEffect)
+                              QPushButton, QWidget, QGraphicsDropShadowEffect, QComboBox)
 
 
 class AnimatedSwitch(QWidget):
@@ -28,6 +28,9 @@ class AnimatedSwitch(QWidget):
         self.is_dragging = False
         self.drag_start_x = 0
         
+        # Флаг для отображения зеленой иконки когда процесс запущен
+        self.is_process_running = False
+        
         # Настройка анимации
         self.animation = QPropertyAnimation(self, b"handle_position")
         self.animation.setDuration(200)
@@ -45,6 +48,11 @@ class AnimatedSwitch(QWidget):
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.update_icon_position()
+    
+    def set_process_running(self, is_running):
+        """Устанавливает статус запущенного процесса (для зеленой иконки)"""
+        self.is_process_running = is_running
+        self.update_icon()
     
     def get_handle_position(self):
         return self._handle_position
@@ -65,10 +73,17 @@ class AnimatedSwitch(QWidget):
     
     def update_icon(self):
         """Обновляет иконку в зависимости от состояния и темы"""
-        if self._checked:
+        # Если процесс запущен - всегда зеленая иконка
+        if self.is_process_running:
             icon_path = "img/logo_main_g.png"
-        else:
+        elif self._checked:
+            # Переключатель включен, но процесс еще не запущен
+            # Используем белую или черную в зависимости от темы
             icon_path = "img/logo_main_w.png" if self.is_dark_theme else "img/logo_main_n.png"
+        else:
+            # Переключатель выключен
+            icon_path = "img/logo_main_w.png" if self.is_dark_theme else "img/logo_main_n.png"
+        
         pixmap = QPixmap(icon_path)
         if not pixmap.isNull():
             scaled_pixmap = pixmap.scaled(40, 40, Qt.AspectRatioMode.KeepAspectRatio, 
@@ -93,9 +108,9 @@ class AnimatedSwitch(QWidget):
         
         # Ползунок — цвет зависит от темы
         if self.is_dark_theme:
-            painter.setBrush(QBrush(QColor(0, 0, 0)))  # Белый в тёмной теме
+            painter.setBrush(QBrush(QColor(0, 0, 0)))  # Черный в тёмной теме
         else:
-            painter.setBrush(QBrush(QColor(255, 255, 255)))  # Чёрный в светлой теме
+            painter.setBrush(QBrush(QColor(255, 255, 255)))  # Белый в светлой теме
         
         handle_y = (self.height - self.handle_radius * 2) / 2
         painter.drawEllipse(int(self._handle_position), int(handle_y),
@@ -141,6 +156,9 @@ class AnimatedSwitch(QWidget):
         self.set_checked(not self._checked)
     
     def set_checked(self, checked):
+        # Останавливаем текущую анимацию перед запуском новой
+        self.animation.stop()
+        
         self._checked = checked
         
         end_position = (self.width - self.handle_radius * 2 - self.handle_margin 
@@ -155,7 +173,6 @@ class AnimatedSwitch(QWidget):
     
     def is_checked(self):
         return self._checked
-
 
 class SmallSwitch(QWidget):
     """Маленький переключатель для выбора темы"""
@@ -257,8 +274,11 @@ class CustomWindow(QDialog):
     def __init__(self):
         super().__init__()
         
-        # Текущая тема (инициализируем ДО setupUi)
-        self.is_dark_theme = False
+        # Инициализация настроек
+        self.settings = QSettings("Aether", "AetherApp")
+        
+        # Загружаем сохраненную тему (по умолчанию False = светлая)
+        self.is_dark_theme = self.settings.value("theme/dark_mode", False, type=bool)
         
         # Для перемещения окна
         self.dragging = False
@@ -267,6 +287,9 @@ class CustomWindow(QDialog):
         self.setupUi()
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        
+        # Применяем сохраненную тему после создания UI
+        self.apply_saved_theme()
     
     def setupUi(self):
         self.setObjectName("Dialog")
@@ -275,11 +298,13 @@ class CustomWindow(QDialog):
         # Главный контейнер с тенью
         self.main_container = QWidget(self)
         self.main_container.setGeometry(5, 5, 372, 362)
-        self.main_container.setStyleSheet("""
-            QWidget {
-                background: rgb(255, 255, 255);
+        # Устанавливаем стиль в зависимости от сохраненной темы
+        bg_color = "#000000" if self.is_dark_theme else "rgb(255, 255, 255)"
+        self.main_container.setStyleSheet(f"""
+            QWidget {{
+                background: {bg_color};
                 border-radius: 25px;
-            }
+            }}
         """)
         
         # Добавляем эффект тени
@@ -292,18 +317,20 @@ class CustomWindow(QDialog):
         # Главный переключатель
         self.main_switch = AnimatedSwitch(self.main_container, 351, 121, 55)
         self.main_switch.setGeometry(10, 70, 351, 200)
-        self.main_switch.setStyleSheet("""
-                QAnimatedSwitch {
+        # Устанавливаем стиль main_switch в зависимости от темы
+        switch_bg = "#000000" if self.is_dark_theme else "white"
+        self.main_switch.setStyleSheet(f"""
+                QAnimatedSwitch {{
                     font-size: 24px;
                     font-weight: bold;
                     border: none;
-                    background: white;
-                }
-                QAnimatedSwitch:hover {
+                    background: {switch_bg};
+                }}
+                QAnimatedSwitch:hover {{
                     border-radius: 15px;
                     background: transparent;
                     color: rgba(0, 0, 0, 0.1);
-                }
+                }}
         """)
         self.main_switch.toggled.connect(self.change_switch_icon)
         
@@ -311,19 +338,22 @@ class CustomWindow(QDialog):
         self.close_button = QPushButton("×", self.main_container)
         self.close_button.setObjectName("close_button")
         self.close_button.setGeometry(330, 10, 31, 31)
-        self.close_button.setStyleSheet("""
-            QPushButton {
+        # Устанавливаем стиль close_button в зависимости от темы
+        btn_color = "white" if self.is_dark_theme else "black"
+        btn_hover = "rgba(255, 255, 255, 0.5)" if self.is_dark_theme else "rgba(0, 0, 0, 0.5)"
+        self.close_button.setStyleSheet(f"""
+            QPushButton {{
                 background: transparent;
-                color: black;
+                color: {btn_color};
                 font-size: 24px;
                 font-weight: bold;
                 border: none;
-            }
-            QPushButton:hover {
+            }}
+            QPushButton:hover {{
                 border-radius: 15px;
                 background: transparent;
-                color: rgba(0, 0, 0, 0.7);
-            }
+                color: {btn_hover};
+            }}
         """)
         self.close_button.clicked.connect(self.close)
         
@@ -331,19 +361,20 @@ class CustomWindow(QDialog):
         self.minimize_button = QPushButton("−", self.main_container)
         self.minimize_button.setObjectName("minimize_button")
         self.minimize_button.setGeometry(300, 10, 31, 31)
-        self.minimize_button.setStyleSheet("""
-            QPushButton {
+        # Устанавливаем стиль minimize_button в зависимости от темы
+        self.minimize_button.setStyleSheet(f"""
+            QPushButton {{
                 background: transparent;
-                color: black;
+                color: {btn_color};
                 font-size: 24px;
                 font-weight: bold;
                 border: none;
-            }
-            QPushButton:hover {
+            }}
+            QPushButton:hover {{
                 border-radius: 15px;
                 background: transparent;
-                color: rgba(0, 0, 0, 0.7);
-            }
+                color: {btn_hover};
+            }}
         """)
         self.minimize_button.clicked.connect(self.showMinimized)
         
@@ -361,13 +392,16 @@ class CustomWindow(QDialog):
         self.main_button = QPushButton("Основной", self.frame_2)
         self.main_button.setObjectName("main_button")
         self.main_button.setGeometry(2, 2, 171, 36)
-        self.main_button.setStyleSheet("""
-            QPushButton {
+        # Устанавливаем стиль main_button в зависимости от темы
+        main_btn_bg = "#000000" if self.is_dark_theme else "rgb(255, 255, 255)"
+        main_btn_color = "white" if self.is_dark_theme else "black"
+        self.main_button.setStyleSheet(f"""
+            QPushButton {{
                 border-radius: 17px;
-                background: rgb(255, 255, 255);
-                color: black;
+                background: {main_btn_bg};
+                color: {main_btn_color};
                 font-weight: bold;
-            }
+            }}
         """)
         
         self.alt_button = QPushButton("Альтернативный", self.frame_2)
@@ -384,6 +418,14 @@ class CustomWindow(QDialog):
                 background: rgb(142, 142, 142);
             }
         """)
+        
+        # Флаг текущего метода (True = альтернативный, False = основной)
+        self.is_alternative_mode = False
+        
+        # Подключаем кнопки
+        self.main_button.clicked.connect(self.switch_to_main_method)
+        self.alt_button.clicked.connect(self.switch_to_alt_method)
+        
         
         # Логотип
         self.logo_label = QLabel(self.main_container)
@@ -435,6 +477,70 @@ class CustomWindow(QDialog):
         self.theme_switch.setGeometry(10, 320, 60, 30)
         self.theme_switch.set_theme(self.is_dark_theme)
         self.theme_switch.toggled.connect(self.change_theme)
+        
+        # Dropdown для выбора bat файла (скрыт по умолчанию)
+        self.bat_dropdown = QComboBox(self.main_container)
+        self.bat_dropdown.setGeometry(10, 250, 352, 30)
+        self.bat_dropdown.setVisible(False)
+        # Стиль QComboBox — только выпадающий список и ползунок
+        self.bat_dropdown.setStyleSheet(f"""
+            QComboBox QAbstractItemView {{
+                background: transparent;           /* убираем фон списка */
+                border: none;
+                padding: 4px 0;                    /* уменьшаем отступы */
+                outline: none;
+            }}
+            QComboBox QAbstractItemView::item {{
+                padding: 6px 12px;                 /* меньше расстояние между пунктами */
+                border-radius: 25px;               /* максимальное скругление */
+                margin: 1px 8px;                   /* компактно, с отступами по бокам */
+                color: rgb(0, 0, 0);
+            }}
+            QComboBox QAbstractItemView::item:selected {{
+                background: rgb(142, 142, 142);    /* выделение */
+                color: white;
+            }}
+            QComboBox QAbstractItemView::item:hover {{
+                background: rgb(162, 162, 162);
+            }}
+            QComboBox QScrollBar:vertical {{
+                background: transparent;
+                width: 6px;
+                margin: 0px;
+            }}
+            QComboBox QScrollBar::handle:vertical {{
+                background: {'#000000' if self.is_dark_theme else '#FFFFFF'};
+                border-radius: 3px;
+                min-height: 20px;
+            }}
+            QComboBox QScrollBar::add-line:vertical,
+            QComboBox QScrollBar::sub-line:vertical {{
+                height: 0px;
+                width: 0px;
+            }}
+        """)
+        
+        # Список bat файлов
+        self.bat_files = [
+            "general (ALT2).bat",
+            "general (ALT3).bat",
+            "general (ALT4).bat",
+            "general (ALT5).bat",
+            "general (ALT6).bat",
+            "general (ALT7).bat",
+            "general (ALT8).bat",
+            "general (FAKE TLS AUTO).bat",
+            "general (FAKE TLS AUTO ALT).bat",
+            "general (FAKE TLS AUTO ALT2).bat",
+            "general (FAKE TLS AUTO ALT3).bat",
+            "general (SIMPLE FAKE).bat",
+            "general (SIMPLE FAKE ALT).bat",
+            "general.bat"
+        ]
+        self.bat_dropdown.addItems(self.bat_files)
+        self.selected_bat_file = "general (ALT).bat"  # По умолчанию
+        self.bat_dropdown.setCurrentText(self.selected_bat_file)
+        self.bat_dropdown.currentTextChanged.connect(self.on_bat_file_changed)
 
     def change_switch_icon(self, checked):
         icon_path = "img/logo_main_g.png" if checked else "img/logo_main.png"
@@ -475,8 +581,133 @@ class CustomWindow(QDialog):
                                          Qt.TransformationMode.SmoothTransformation)
             self.logo_label.setPixmap(scaled_pixmap)
     
+    def toggle_bat_dropdown(self):
+        """Показывает/скрывает dropdown с bat файлами"""
+        self.bat_dropdown.setVisible(not self.bat_dropdown.isVisible())
+    
+    def on_bat_file_changed(self, filename):
+        """Обработчик изменения выбранного bat файла"""
+        self.selected_bat_file = filename
+        print(f"Выбран bat файл: {filename}")
+    
+    def apply_saved_theme(self):
+        """Применяет сохраненную тему при запуске приложения"""
+        print(f"[DEBUG] Загружена тема: {'темная' if self.is_dark_theme else 'светлая'}")
+        
+        # Блокируем сигнал чтобы избежать двойного вызова
+        self.theme_switch.blockSignals(True)
+        self.theme_switch.set_checked(self.is_dark_theme)
+        self.theme_switch.blockSignals(False)
+        
+        # Принудительно применяем тему
+        self.change_theme(self.is_dark_theme)
+        print(f"[DEBUG] Тема применена")
+    
+    def switch_to_main_method(self):
+        self.is_alternative_mode = False
+        self.bat_dropdown.setVisible(False)
+        self.update_button_styles_for_main()
+        
+        # Обновляем стили кнопок
+        if self.is_dark_theme:
+            # Темная тема
+            self.main_button.setStyleSheet("""
+                QPushButton {
+                    border-radius: 17px;
+                    background: #000000;
+                    color: white;
+                    font-weight: bold;
+                }
+            """)
+            self.alt_button.setStyleSheet("""
+                QPushButton {
+                    border-radius: 17px;
+                    background: rgb(162, 162, 162);
+                    color: rgb(0, 0, 0);
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background: rgb(142, 142, 142);
+                }
+            """)
+        else:
+            # Светлая тема
+            self.main_button.setStyleSheet("""
+                QPushButton {
+                    border-radius: 17px;
+                    background: rgb(255, 255, 255);
+                    color: black;
+                    font-weight: bold;
+                }
+            """)
+            self.alt_button.setStyleSheet("""
+                QPushButton {
+                    border-radius: 17px;
+                    background: rgb(162, 162, 162);
+                    color: rgb(0, 0, 0);
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background: rgb(142, 142, 142);
+                }
+            """)
+
+    def switch_to_alt_method(self):
+        self.is_alternative_mode = True
+        self.bat_dropdown.setVisible(True)
+        self.update_button_styles_for_alt()
+        
+        # Обновляем стили кнопок
+        if self.is_dark_theme:
+            # Темная тема
+            self.main_button.setStyleSheet("""
+                QPushButton {
+                    border-radius: 17px;
+                    background: rgb(162, 162, 162);
+                    color: rgb(0, 0, 0);
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background: rgb(142, 142, 142);
+                }
+            """)
+            self.alt_button.setStyleSheet("""
+                QPushButton {
+                    border-radius: 17px;
+                    background: #000000;
+                    color: white;
+                    font-weight: bold;
+                }
+            """)
+        else:
+            # Светлая тема
+            self.main_button.setStyleSheet("""
+                QPushButton {
+                    border-radius: 17px;
+                    background: rgb(162, 162, 162);
+                    color: rgb(0, 0, 0);
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background: rgb(142, 142, 142);
+                }
+            """)
+            self.alt_button.setStyleSheet("""
+                QPushButton {
+                    border-radius: 17px;
+                    background: rgb(255, 255, 255);
+                    color: black;
+                    font-weight: bold;
+                }
+            """)
+    
     def change_theme(self, is_dark):
         """Изменяет тему приложения"""
+        print(f"[DEBUG] change_theme вызван с is_dark={is_dark}")
+        
+        # Сохраняем выбор темы
+        self.settings.setValue("theme/dark_mode", is_dark)
+        
         self.is_dark_theme = is_dark
         self.main_switch.set_theme(is_dark)
         self.theme_switch.set_theme(is_dark)
@@ -488,11 +719,12 @@ class CustomWindow(QDialog):
         self.github_button.setIcon(github_icon)
         self.github_button.setIconSize(QSize(64, 32))
         self.github_button.setCursor(Qt.PointingHandCursor)
+        
         # Изменяем цвет фона
         if is_dark:
             self.main_container.setStyleSheet("""
                 QWidget {
-                    background: rgb(0, 0, 0);
+                    background: #000000;
                     border-radius: 25px;
                 }
             """)
@@ -502,7 +734,7 @@ class CustomWindow(QDialog):
                     font-weight: bold;
                     border: none;
                     border-radius: 15px;
-                    background: black;
+                    background: #000000;
                 }
                 QAnimatedSwitch:hover {
                     border-radius: 15px;
@@ -519,7 +751,7 @@ class CustomWindow(QDialog):
                 QPushButton:hover {
                     border-radius: 15px;
                     background: transparent;
-                    color: rgba(255, 255, 255, 0.7);
+                    color: rgba(255, 255, 255, 0.5);
                 }
             """)
             self.minimize_button.setStyleSheet("""
@@ -533,27 +765,50 @@ class CustomWindow(QDialog):
                 QPushButton:hover {
                     border-radius: 15px;
                     background: transparent;
-                    color: rgba(255, 255, 255, 0.7);
+                    color: rgba(255, 255, 255, 0.5);
                 }
             """)
-            self.main_button.setStyleSheet("""
-                QPushButton {
-                    border-radius: 17px;
-                    background: rgb(0, 0, 0);
-                    color: white;
-                    font-weight: bold;
-                }
-            """)
-            self.alt_button.setStyleSheet("""
-                QPushButton {
-                    border-radius: 17px;
+            self.bat_dropdown.setStyleSheet(f"""
+                QComboBox {{
+                    border-radius: 15px;
                     background: rgb(162, 162, 162);
                     color: rgb(0, 0, 0);
                     font-weight: bold;
-                }
-                QPushButton:hover {
+                    padding: 5px 15px;
+                    border: none;
+                }}
+                QComboBox:hover {{
                     background: rgb(142, 142, 142);
-                }
+                }}
+                QComboBox::drop-down {{ width: 0px; border: none; }}
+                QComboBox::down-arrow {{ image: none; padding: 30px;}}
+                QComboBox QAbstractItemView {{
+                    background: rgb(162, 162, 162);
+                    color: rgb(0, 0, 0);
+                    selection-background-color: rgb(255, 255, 255);
+                    border-radius: 15px;
+                    outline: none;
+                    margin-top: 4px;
+                }}
+                QComboBox QAbstractItemView::item {{
+                    padding: 2px;
+                    border-radius: 15px;
+                }}
+                QComboBox QScrollBar:vertical {{
+                    background: transparent;
+                    width: 8px;
+                    margin: 0px;
+                    border-radius: 4px;
+                }}
+                QComboBox QScrollBar::handle:vertical {{
+                    background: rgb(255, 255, 255);
+                    min-height: 20px;
+                    border-radius: 4px;
+                }}
+                QComboBox QScrollBar::add-line:vertical,
+                QComboBox QScrollBar::sub-line:vertical {{
+                    height: 0px; width: 0px;
+                }}
             """)
         else:
             self.main_container.setStyleSheet("""
@@ -586,7 +841,7 @@ class CustomWindow(QDialog):
                 QPushButton:hover {
                     border-radius: 15px;
                     background: transparent;
-                    color: rgba(255, 255, 255, 0.7);
+                    color: rgba(0, 0, 0, 0.5);
                 }
             """)
             self.minimize_button.setStyleSheet("""
@@ -600,9 +855,81 @@ class CustomWindow(QDialog):
                 QPushButton:hover {
                     border-radius: 15px;
                     background: transparent;
-                    color: rgba(255, 255, 255, 0.7);
+                    color: rgba(0, 0, 0, 0.5);
                 }
             """)
+            self.bat_dropdown.setStyleSheet(f"""
+                QComboBox {{
+                    border-radius: 15px;
+                    background: rgb(162, 162, 162);
+                    color: rgb(0, 0, 0);
+                    font-weight: bold;
+                    padding: 5px 15px;
+                    border: none;
+                }}
+                QComboBox:hover {{
+                    background: rgb(142, 142, 142);
+                }}
+                QComboBox::drop-down {{ width: 0px; border: none; padding: 5px;}}
+                QComboBox::down-arrow {{ image: none; }}
+                QComboBox QAbstractItemView {{
+                    background: rgb(162, 162, 162);
+                    color: rgb(0, 0, 0);
+                    selection-background-color: rgb(0, 0, 0);
+                    border-radius: 15px;
+                    outline: none;
+                }}
+                QComboBox QAbstractItemView::item {{
+                    padding: 2px;
+                    border-radius: 15px;
+                                        
+                }}
+                QComboBox QScrollBar:vertical {{
+                    background: transparent;
+                    width: 8px;
+                    margin: 0px;
+                    border-radius: 4px;
+                }}
+                QComboBox QScrollBar::handle:vertical {{
+                    background: rgb(0, 0, 0);
+                    min-height: 20px;
+                    border-radius: 4px;
+                }}
+                QComboBox QScrollBar::add-line:vertical,
+                QComboBox QScrollBar::sub-line:vertical {{
+                    height: 0px; width: 0px;
+                }}
+            """)
+        
+        # Восстанавливаем стили кнопок в зависимости от текущего режима
+        if self.is_alternative_mode:
+            self.update_button_styles_for_alt()
+        else:
+            self.update_button_styles_for_main()
+
+    def update_button_styles_for_main(self):
+        """Обновляет стили кнопок для основного режима"""
+        if self.is_dark_theme:
+            self.main_button.setStyleSheet("""
+                QPushButton {
+                    border-radius: 17px;
+                    background: #000000;
+                    color: white;
+                    font-weight: bold;
+                }
+            """)
+            self.alt_button.setStyleSheet("""
+                QPushButton {
+                    border-radius: 17px;
+                    background: rgb(162, 162, 162);
+                    color: rgb(0, 0, 0);
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background: rgb(142, 142, 142);
+                }
+            """)
+        else:
             self.main_button.setStyleSheet("""
                 QPushButton {
                     border-radius: 17px;
@@ -623,6 +950,48 @@ class CustomWindow(QDialog):
                 }
             """)
 
+    def update_button_styles_for_alt(self):
+        """Обновляет стили кнопок для альтернативного режима"""
+        if self.is_dark_theme:
+            self.main_button.setStyleSheet("""
+                QPushButton {
+                    border-radius: 17px;
+                    background: rgb(162, 162, 162);
+                    color: rgb(0, 0, 0);
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background: rgb(142, 142, 142);
+                }
+            """)
+            self.alt_button.setStyleSheet("""
+                QPushButton {
+                    border-radius: 17px;
+                    background: #000000;
+                    color: white;
+                    font-weight: bold;
+                }
+            """)
+        else:
+            self.main_button.setStyleSheet("""
+                QPushButton {
+                    border-radius: 17px;
+                    background: rgb(162, 162, 162);
+                    color: rgb(0, 0, 0);
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background: rgb(142, 142, 142);
+                }
+            """)
+            self.alt_button.setStyleSheet("""
+                QPushButton {
+                    border-radius: 17px;
+                    background: rgb(255, 255, 255);
+                    color: black;
+                    font-weight: bold;
+                }
+            """)
     def mousePressEvent(self, event):
         """Начало перетаскивания окна"""
         if event.button() == Qt.MouseButton.LeftButton:
